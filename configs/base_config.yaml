@@ -1,0 +1,61 @@
+name: Base Config
+model_type: visioncapt
+model:
+  vision_encoder:
+    type: clip
+    model_name: openai/clip-vit-base-patch32
+    pretrained: true
+    image_size: 224
+    freeze: false
+    use_fp16: false
+  language_model:
+    type: transformers
+    # model_name: google/gemma-2b
+    model_name: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+    pretrained: true
+    freeze_except_lm_head: false
+    load_in_8bit: false
+    load_in_4bit: true
+    use_lora: false
+  projection:
+    type: mlp
+    input_dim: 768  # CLIP ViT-B/32 hidden size
+    hidden_dim: 1024
+    output_dim: 768  # Gemma-2B embedding size
+    dropout: 0.1
+    use_gelu: true
+
+training:
+  batch_size: 32
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1000
+  max_steps: 20000
+  save_steps: 1000
+  eval_steps: 500
+  logging_steps: 100
+  fp16: true
+  output_dir: "checkpoints/base_model"
+  seed: 42
+  optimizer:
+    type: "adamw"
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1.0e-8
+  scheduler:
+    type: "cosine"
+    warmup_ratio: 0.05
+    min_lr_ratio: 0.1
+
+data:
+  dataset: "flickr8k"
+  train_file: "data/flickr8k_processed/train_captions.csv"
+  val_file: "data/flickr8k_processed/val_captions.csv"
+  image_dir: "data/flickr8k_processed/images"
+  max_seq_length: 77
+  preprocessing:
+    image_resize: 224
+    image_crop_size: 224
+    image_mean: [0.48145466, 0.4578275, 0.40821073]
+    image_std: [0.26862954, 0.26130258, 0.27577711]
