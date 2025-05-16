@@ -1,4 +1,90 @@
-# LoRA fine-tuning config
+# # LoRA fine-tuning config
+
+# name: LoRA Config
+# model_type: visioncapt
+# model:
+#   vision_encoder:
+#     type: clip
+#     model_name: openai/clip-vit-base-patch32
+#     pretrained: true
+#     image_size: 224
+#     freeze: true  # Freeze vision encoder for LoRA training
+#     use_fp16: false
+#   language_model:
+#     type: transformers
+#     # model_name: google/gemma-2b
+#     model_name: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+#     pretrained: true
+#     freeze_except_lm_head: true  # Freeze most of the language model
+#     load_in_8bit: false
+#     load_in_4bit: true  # Use 4-bit quantization for efficiency
+#     use_lora: true  # Enable LoRA for language model
+#     lora_config:
+#       r: 16
+#       lora_alpha: 32
+#       lora_dropout: 0.05
+#       target_modules: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+#   projection:
+#     type: mlp
+#     input_dim: 768  # CLIP ViT-B/32 hidden size
+#     hidden_dim: 1024
+#     output_dim: 768  # Gemma-2B embedding size
+#     dropout: 0.1
+#     use_gelu: true
+
+# # LoRA-specific configuration
+# lora:
+#   enabled: true
+#   r: 16  # LoRA rank
+#   alpha: 32  # LoRA alpha
+#   dropout: 0.05
+#   apply_to: ["language_model", "projection"]  # Which components to apply LoRA to
+#   module_mapping:
+#     # Apply LoRA to specific modules
+#     - "language_model\\.model\\.transformer\\.h\\.[0-9]+\\.mlp\\.c_fc"
+#     - "language_model\\.model\\.transformer\\.h\\.[0-9]+\\.mlp\\.c_proj"
+#     - "language_model\\.model\\.transformer\\.h\\.[0-9]+\\.attn\\.c_attn"
+#     - "language_model\\.model\\.transformer\\.h\\.[0-9]+\\.attn\\.c_proj"
+#     - "visual_projection"
+#   vision_target_modules: []  # No LoRA for vision encoder
+#   language_target_modules: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+#   projection_target_modules: ["0", "3"]  # LoRA for first and last layers of MLP
+
+# training:
+#   batch_size: 64  # Larger batch size for LoRA training
+#   gradient_accumulation_steps: 2
+#   learning_rate: 5.0e-4  # Higher learning rate for LoRA
+#   weight_decay: 0.01
+#   warmup_steps: 500
+#   max_steps: 10000
+#   save_steps: 1000
+#   eval_steps: 500
+#   logging_steps: 100
+#   fp16: true
+#   output_dir: "checkpoints/lora_model"
+#   seed: 42
+#   optimizer:
+#     type: "adamw"
+#     beta1: 0.9
+#     beta2: 0.999
+#     eps: 1.0e-8
+#   scheduler:
+#     type: "cosine"
+#     warmup_ratio: 0.05
+#     min_lr_ratio: 0.1
+
+# data:
+#   dataset: "flickr8k"
+#   train_file: "data/flickr8k_processed/train_captions.csv"
+#   val_file: "data/flickr8k_processed/val_captions.csv"
+#   image_dir: "data/flickr8k_processed/images"
+#   max_seq_length: 77
+#   preprocessing:
+#     image_resize: 224
+#     image_crop_size: 224
+#     image_mean: [0.48145466, 0.4578275, 0.40821073]
+#     image_std: [0.26862954, 0.26130258, 0.27577711]
+
 
 name: LoRA Config
 model_type: visioncapt
@@ -12,8 +98,7 @@ model:
     use_fp16: false
   language_model:
     type: transformers
-    # model_name: google/gemma-2b
-    model_name: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+    model_name: TinyLlama/TinyLlama-1.1B-Chat-v1.0  # Using TinyLlama as the small LLM
     pretrained: true
     freeze_except_lm_head: true  # Freeze most of the language model
     load_in_8bit: false
@@ -28,7 +113,7 @@ model:
     type: mlp
     input_dim: 768  # CLIP ViT-B/32 hidden size
     hidden_dim: 1024
-    output_dim: 768  # Gemma-2B embedding size
+    output_dim: 768  # TinyLlama embedding size
     dropout: 0.1
     use_gelu: true
 
@@ -49,6 +134,7 @@ lora:
   vision_target_modules: []  # No LoRA for vision encoder
   language_target_modules: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
   projection_target_modules: ["0", "3"]  # LoRA for first and last layers of MLP
+  # projection_target_modules: [] # No LoRA for projection layer
 
 training:
   batch_size: 64  # Larger batch size for LoRA training
@@ -69,7 +155,7 @@ training:
     beta2: 0.999
     eps: 1.0e-8
   scheduler:
-    type: "cosine"
+    type: "cosine_with_min_lr"  # Using our custom scheduler that handles min_lr_ratio
     warmup_ratio: 0.05
     min_lr_ratio: 0.1
 

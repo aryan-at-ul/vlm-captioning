@@ -167,6 +167,8 @@ class TransformersLM(BaseLM):
                 if "lm_head" not in name:
                     param.requires_grad = False
     
+    # Fix 1: Update TransformersLM forward method in visioncapt/model/language_model/transformers_lm.py
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -184,7 +186,7 @@ class TransformersLM(BaseLM):
             labels: Labels for language modeling of shape (batch_size, seq_len)
             projected_visual_features: Projected visual features of shape (batch_size, hidden_size)
             **kwargs: Additional keyword arguments
-            
+                
         Returns:
             Dict containing loss, logits, and other model outputs
         """
@@ -211,15 +213,18 @@ class TransformersLM(BaseLM):
             image_token_id = self.tokenizer.convert_tokens_to_ids("<image>")
             image_token_positions = (input_ids == image_token_id).nonzero(as_tuple=True)
             
+            # Create a clone to avoid in-place operations that modify tensors requiring gradients
+            inputs_embeds_clone = inputs_embeds.clone()
+            
             for i in range(batch_size):
                 idx = (image_token_positions[0] == i).nonzero(as_tuple=True)[0]
                 if len(idx) > 0:
                     position = image_token_positions[1][idx[0]]
-                    inputs_embeds[i, position] = visual_emb[i]
+                    inputs_embeds_clone[i, position] = visual_emb[i]
             
-            # Forward pass through model
+            # Forward pass through model with cloned embeddings
             outputs = self.model(
-                inputs_embeds=inputs_embeds,
+                inputs_embeds=inputs_embeds_clone,
                 attention_mask=attention_mask,
                 labels=labels,
                 **kwargs
@@ -234,7 +239,13 @@ class TransformersLM(BaseLM):
             )
         
         return outputs
-    
+
+
+
+
+
+    # Fix 3: Update generate method in visioncapt/model/language_model/transformers_lm.py
+
     def generate(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -313,11 +324,17 @@ class TransformersLM(BaseLM):
             image_token_id = self.tokenizer.convert_tokens_to_ids("<image>")
             image_token_positions = (input_ids == image_token_id).nonzero(as_tuple=True)
             
+            # Create a clone to avoid in-place operations
+            inputs_embeds_clone = inputs_embeds.clone()
+            
             for i in range(batch_size):
                 idx = (image_token_positions[0] == i).nonzero(as_tuple=True)[0]
                 if len(idx) > 0:
                     position = image_token_positions[1][idx[0]]
-                    inputs_embeds[i, position] = visual_emb[i]
+                    inputs_embeds_clone[i, position] = visual_emb[i]
+            
+            # Use the cloned tensor
+            inputs_embeds = inputs_embeds_clone
         
         # Create attention mask if not provided
         if attention_mask is None:
@@ -360,7 +377,9 @@ class TransformersLM(BaseLM):
         generated_text = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         
         return generated_text
-    
+
+    # Fix 2: Update prepare_inputs_for_generation method in visioncapt/model/language_model/transformers_lm.py
+
     def prepare_inputs_for_generation(
         self,
         input_ids: torch.LongTensor,
@@ -410,17 +429,22 @@ class TransformersLM(BaseLM):
             image_token_id = self.tokenizer.convert_tokens_to_ids("<image>")
             image_token_positions = (input_ids == image_token_id).nonzero(as_tuple=True)
             
+            # Create a clone to avoid in-place operations
+            inputs_embeds_clone = inputs_embeds.clone()
+            
             for i in range(batch_size):
                 idx = (image_token_positions[0] == i).nonzero(as_tuple=True)[0]
                 if len(idx) > 0:
                     position = image_token_positions[1][idx[0]]
-                    inputs_embeds[i, position] = visual_emb[i]
+                    inputs_embeds_clone[i, position] = visual_emb[i]
             
             # Replace input_ids with inputs_embeds
             model_inputs.pop("input_ids")
-            model_inputs["inputs_embeds"] = inputs_embeds
+            model_inputs["inputs_embeds"] = inputs_embeds_clone
         
         return model_inputs
+
+
     
     def save_pretrained(self, save_directory: str) -> None:
         """

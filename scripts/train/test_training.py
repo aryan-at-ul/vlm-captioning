@@ -211,3 +211,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+#python scripts/train/test_training.py --load_4bit  --num_samples 20 --num_steps 5

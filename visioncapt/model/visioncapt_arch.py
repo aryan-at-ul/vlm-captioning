@@ -5,11 +5,12 @@ import torch
 import torch.nn as nn
 import logging
 from typing import Dict, List, Optional, Tuple, Union, Any
-from peft import PeftModel
+from peft import PeftModel, LoraConfig, get_peft_model
 
 from .vision_encoder.builder import build_vision_encoder
-from .language_model.builder  import build_language_model
+from .language_model.builder import build_language_model
 from .projection.builder import build_projection_layer
+from .projection_wrapper import ProjectionWrapper, apply_lora_to_projection  # Add this import
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +68,6 @@ class VisionCaptArch(nn.Module):
         
         # Apply LoRA if enabled
         if hasattr(config, "lora") and config.lora.get("enabled", False):
-            from peft import LoraConfig, get_peft_model
-            
             # Only apply LoRA to specified modules
             if "vision_encoder" in config.lora.get("apply_to", []):
                 logger.info("Applying LoRA to vision encoder...")
@@ -85,37 +84,34 @@ class VisionCaptArch(nn.Module):
             
             # Apply LoRA to projection layer if specified
             if "projection" in config.lora.get("apply_to", []):
-                logger.info("Applying LoRA to projection layer...")
-                peft_config = LoraConfig(
-                    task_type="FEATURE_EXTRACTION",
-                    r=config.lora.get("r", 8),
-                    lora_alpha=config.lora.get("alpha", 16),
-                    lora_dropout=config.lora.get("dropout", 0.05),
-                    target_modules=config.lora.get("projection_target_modules", ["0", "3"]),
-                )
-                self.projection = get_peft_model(self.projection, peft_config)
+                logger.info("Applying LoRA to projection layer with custom wrapper...")
+                # Use our custom wrapper to safely apply LoRA to projection
+                self.projection = apply_lora_to_projection(self, config)
         
         logger.info("VisionCaptArch initialized!")
     
     def _init_weights(self):
         """Initialize weights of the projection layer."""
-        if isinstance(self.projection, nn.Sequential):
-            for module in self.projection:
+        # Attempt to get the base projection if it's wrapped
+        projection = getattr(self.projection, "projection", self.projection)
+        
+        if isinstance(projection, nn.Sequential):
+            for module in projection:
                 if isinstance(module, nn.Linear):
                     nn.init.xavier_uniform_(module.weight)
                     if module.bias is not None:
                         nn.init.zeros_(module.bias)
-        elif isinstance(self.projection, nn.Linear):
-            nn.init.xavier_uniform_(self.projection.weight)
-            if self.projection.bias is not None:
-                nn.init.zeros_(self.projection.bias)
-        elif hasattr(self.projection, "apply"):
+        elif isinstance(projection, nn.Linear):
+            nn.init.xavier_uniform_(projection.weight)
+            if projection.bias is not None:
+                nn.init.zeros_(projection.bias)
+        elif hasattr(projection, "apply"):
             def _init_weights(m):
                 if isinstance(m, nn.Linear):
                     nn.init.xavier_uniform_(m.weight)
                     if m.bias is not None:
                         nn.init.zeros_(m.bias)
-            self.projection.apply(_init_weights)
+            projection.apply(_init_weights)
     
     def forward(
         self,
@@ -150,15 +146,24 @@ class VisionCaptArch(nn.Module):
         image_features = self.vision_encoder(images)
         
         # Project image features to language model embedding space
-        projected_features = self.projection(image_features)
+        # CRITICAL: Only pass the image features - nothing else
+        try:
+            # Call with positional arg only - no keywords
+            projected_features = self.projection(image_features)
+        except Exception as e:
+            logger.error(f"Error projecting features: {e}")
+            logger.error(f"Image features shape: {image_features.shape}")
+            logger.error(f"Projection type: {type(self.projection)}")
+            raise
         
-        # Forward pass through language model
+        # Forward pass through language model with remaining arguments
+        lm_kwargs = {k: v for k, v in kwargs.items()}
         outputs = self.language_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=labels,
             projected_visual_features=projected_features,
-            **kwargs
+            **lm_kwargs
         )
         
         if return_dict:
@@ -219,25 +224,32 @@ class VisionCaptArch(nn.Module):
         with torch.no_grad():
             image_features = self.vision_encoder(images)
             
-            # Project image features to language model embedding space
+            # Project image features - ONLY pass image_features directly
+            # No keyword arguments, just positional
             projected_features = self.projection(image_features)
+            
+            # Create generation kwargs dictionary
+            generation_kwargs = {
+                "max_length": max_length,
+                "min_length": min_length,
+                "num_beams": num_beams,
+                "temperature": temperature,
+                "top_p": top_p,
+                "top_k": top_k,
+                "repetition_penalty": repetition_penalty,
+            }
+            generation_kwargs.update(kwargs)
             
             # Generate captions
             captions = self.language_model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 projected_visual_features=projected_features,
-                max_length=max_length,
-                min_length=min_length,
-                num_beams=num_beams,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                repetition_penalty=repetition_penalty,
-                **kwargs
+                **generation_kwargs
             )
         
         return captions
+
 
     def save_pretrained(self, output_dir: str, save_lora_only: bool = False) -> None:
         """
